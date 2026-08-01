@@ -1,0 +1,24 @@
+{
+	"/": [
+		"src/routes/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/exams": [
+		"src/routes/+layout.ts"
+	],
+	"/exam/[id]": [
+		"src/routes/+layout.ts"
+	],
+	"/exam/[id]/completed": [
+		"src/routes/+layout.ts"
+	],
+	"/exam/[id]/lobby": [
+		"src/routes/+layout.ts"
+	],
+	"/forgot-password": [
+		"src/routes/+layout.ts"
+	],
+	"/login": [
+		"src/routes/+layout.ts"
+	]
+}
