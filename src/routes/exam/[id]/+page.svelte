@@ -436,7 +436,8 @@
 {/if}
 
 <style>
-  .exam-shell { min-height: 100vh; background: #f5f4f0; }
+  .exam-shell { min-height: 100vh; background: #f5f4f0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .exam-shell :global(*) { -webkit-touch-callout: none; }
   header { min-height: 76px; padding: .8rem max(1.3rem, calc((100vw - 1280px)/2)); display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: white; background: var(--navy); position: sticky; top: 0; z-index: 20; box-shadow: 0 6px 18px rgb(12 26 47 / .15); }
   .header-left, .header-right, .sync, .timer { display: flex; align-items: center; }
   .header-left { gap: 1.1rem; }.divider { width: 1px; height: 32px; background: rgb(255 255 255 / .18); }

@@ -30,6 +30,8 @@ export class StrictExamGuard {
     document.addEventListener('cut', this.blockInteraction);
     document.addEventListener('paste', this.blockInteraction);
     document.addEventListener('dragstart', this.blockInteraction);
+    document.addEventListener('selectstart', this.blockInteraction);
+    document.addEventListener('selectionchange', this.clearSelection);
 
     this.emit(
       document.fullscreenElement ? 'Mode ujian ketat aktif.' : 'Aktifkan layar penuh untuk melanjutkan ujian.',
@@ -50,6 +52,8 @@ export class StrictExamGuard {
     document.removeEventListener('cut', this.blockInteraction);
     document.removeEventListener('paste', this.blockInteraction);
     document.removeEventListener('dragstart', this.blockInteraction);
+    document.removeEventListener('selectstart', this.blockInteraction);
+    document.removeEventListener('selectionchange', this.clearSelection);
   }
 
   allowExit() {
@@ -101,6 +105,11 @@ export class StrictExamGuard {
   };
 
   private readonly blockInteraction = (event: Event) => event.preventDefault();
+
+  private readonly clearSelection = () => {
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) selection.removeAllRanges();
+  };
 
   private record(reason: string) {
     if (!this.armed || this.leaving) return;
