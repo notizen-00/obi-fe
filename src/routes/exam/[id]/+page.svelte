@@ -7,6 +7,7 @@
   import Brand from '$lib/components/Brand.svelte';
   import { api } from '$lib/api';
   import { formatDuration, getRemaining, getServerOffset, resolveExamEnd } from '$lib/time';
+  import { StrictExamGuard } from '$lib/exam-security';
   import type { ActiveExam, Answer, ExamSummary, SaveState, User } from '$lib/types';
 
   let active = $state<ActiveExam | null>(null);
@@ -25,6 +26,8 @@
   let loading = $state(true);
   let error = $state('');
   let submitting = $state(false);
+  let securityLocked = $state(false);
+  let securityMessage = $state('Aktifkan layar penuh untuk melanjutkan ujian.');
   let saveRunning = false;
   let saveQueued = false;
   let dirty = false;
@@ -34,6 +37,7 @@
   let timerInterval: ReturnType<typeof setInterval>;
   let periodicInterval: ReturnType<typeof setInterval>;
   let timeUpHandled = false;
+  let guard: StrictExamGuard;
   let drawerDialog = $state<HTMLDivElement>();
   const examId = $derived(Number(page.params.id));
   const question = $derived(active?.questions[current]);
@@ -42,6 +46,18 @@
 
   onMount(() => {
     online = navigator.onLine;
+    guard = new StrictExamGuard({
+      onState: ({ reason, locked }) => {
+        securityLocked = locked;
+        securityMessage = reason;
+        cacheLocal();
+        if (dirty) void saveAnswers();
+      },
+      onBeforeExit: () => {
+        cacheLocal();
+        if (active && online) void api.save(active.exam.id, { ...answers }, true);
+      }
+    });
     const handleOnline = () => { online = true; if (dirty) void saveAnswers(); };
     const handleOffline = () => { online = false; if (dirty) saveState = 'offline'; };
     const handleKeydown = (event: KeyboardEvent) => {
@@ -62,6 +78,7 @@
       clearInterval(periodicInterval);
       clearTimeout(debounceTimer);
       clearTimeout(retryTimer);
+      guard.disable();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('keydown', handleKeydown);
@@ -96,6 +113,7 @@
       );
       remaining = getRemaining(examEndsAt, offset);
       restoreLocal(exam);
+      guard.enable();
       saveState = 'idle';
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Ruang ujian gagal dimuat.';
@@ -203,6 +221,16 @@
     cacheLocal();
   }
 
+  async function resumeSecureExam() {
+    if (submitting) return;
+    try {
+      await guard.enterFullscreen();
+      securityLocked = false;
+    } catch (cause) {
+      securityMessage = cause instanceof Error ? cause.message : 'Layar penuh gagal diaktifkan.';
+    }
+  }
+
   async function submitExam(expired = false) {
     if (!active || submitting) return;
     submitting = true;
@@ -213,6 +241,9 @@
       if (!saved) throw new Error('Jawaban terakhir belum berhasil disimpan. Periksa koneksi lalu coba kembali.');
       await api.submit(active.exam.id);
       sessionStorage.removeItem(cacheKey(active.exam.id));
+      guard.allowExit();
+      guard.disable();
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       await goto(`/exam/${active.exam.id}/completed?status=${expired ? 'expired' : 'submitted'}`);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Ujian gagal dikumpulkan. Silakan coba lagi.';
@@ -258,6 +289,10 @@
     </header>
 
     {#if !online}<div class="offline-banner" role="alert"><AppIcon name="alert" size={16}/> Koneksi terputus. Jawaban tetap tersimpan di perangkat dan akan dikirim saat koneksi pulih.</div>{/if}
+    <div class="security-banner" role="status">
+      <AppIcon name="lock" size={15}/>
+      Mode ujian ketat aktif
+    </div>
 
     <main>
       <section class="question-area">
@@ -385,6 +420,19 @@
       </div>
     </div>
   {/if}
+
+  {#if securityLocked && !submitting}
+    <div class="security-lock" role="alertdialog" aria-modal="true" aria-labelledby="security-title">
+      <div class="security-lock-card">
+        <div class="security-lock-icon"><AppIcon name="lock" size={30}/></div>
+        <p class="eyebrow">Mode ujian ketat</p>
+        <h2 id="security-title">Ujian dikunci sementara</h2>
+        <p>{securityMessage}</p>
+        <small>Kembali ke halaman ujian dan aktifkan layar penuh untuk melanjutkan.</small>
+        <button class="primary" onclick={resumeSecureExam}>Kembali ke layar penuh</button>
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -398,6 +446,12 @@
   .timer { min-width: 150px; justify-content: center; gap: .6rem; padding: .5rem .8rem; color: white; background: rgb(255 255 255 / .08); border: 1px solid rgb(255 255 255 / .12); border-radius: .65rem; }
   .timer b { font: 1.1rem/1 var(--display); letter-spacing: .08em; }.timer.warning { color: #ffd477; }.timer.critical { color: #ff987f; background: rgb(239 119 93 / .12); }
   .offline-banner { padding: .65rem 1rem; display: flex; justify-content: center; align-items: center; gap: .5rem; color: #7a4c05; background: #fff1c1; font-size: .75rem; font-weight: 650; }
+  .security-banner { padding: .5rem 1rem; display: flex; justify-content: center; align-items: center; gap: .45rem; color: #276749; background: #e8f6ef; border-bottom: 1px solid #cde9db; font-size: .7rem; font-weight: 750; }
+  .security-lock { position: fixed; inset: 0; z-index: 1000; padding: 1rem; display: grid; place-items: center; background: rgb(8 20 38 / .94); backdrop-filter: blur(8px); }
+  .security-lock-card { width: min(460px, 100%); padding: 2rem; text-align: center; background: white; border-radius: 1rem; box-shadow: 0 24px 70px rgb(0 0 0 / .35); }
+  .security-lock-icon { width: 4.5rem; height: 4.5rem; margin: 0 auto 1rem; display: grid; place-items: center; color: white; background: var(--coral); border-radius: 50%; }
+  .security-lock h2 { margin: .4rem 0 .7rem; color: var(--navy); font: 400 1.8rem var(--display); }.security-lock p:not(.eyebrow) { color: var(--muted); line-height: 1.55; }
+  .security-lock small { display: block; margin: .65rem 0 1.2rem; color: var(--muted); font-size: .67rem; line-height: 1.5; }.security-lock button { width: 100%; }
   main { max-width: 1280px; margin: auto; padding: 2rem 1.3rem 4rem; display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 1.3rem; }
   .progress-row { display: flex; justify-content: space-between; color: var(--muted); font-size: .72rem; }.progress-row b { color: var(--navy); }.progress { height: 4px; margin: .6rem 0 1rem; overflow: hidden; background: #dedbd4; border-radius: 99px; }.progress span { display: block; height: 100%; background: var(--coral); transition: width .3s; }
   .question-card { min-height: 560px; padding: clamp(1.3rem, 3vw, 2.5rem); background: white; border: 1px solid var(--line); border-radius: 1rem; }

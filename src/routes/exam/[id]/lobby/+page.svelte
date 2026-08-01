@@ -11,6 +11,8 @@
   let user = $state<User | null>(null);
   let loading = $state(true);
   let starting = $state(false);
+  let rulesOpen = $state(false);
+  let rulesAccepted = $state(false);
   let error = $state('');
   const examId = $derived(Number(page.params.id));
 
@@ -26,14 +28,32 @@
     } finally { loading = false; }
   });
 
+  function openRules() {
+    error = '';
+    rulesAccepted = false;
+    rulesOpen = true;
+  }
+
+  function closeRules() {
+    if (starting) return;
+    rulesOpen = false;
+    rulesAccepted = false;
+  }
+
   async function start() {
-    if (!exam || starting) return;
+    if (!exam || starting || !rulesAccepted) return;
     starting = true;
     error = '';
     try {
+      if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
+        throw new Error('Browser ini tidak mendukung mode layar penuh yang diwajibkan untuk ujian. Gunakan browser terbaru.');
+      }
+      await document.documentElement.requestFullscreen();
+      rulesOpen = false;
       await api.start(exam.id, exam.kind);
       await goto(`/exam/${exam.id}`);
     } catch (cause) {
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       error = cause instanceof Error ? cause.message : 'Ujian belum dapat dimulai.';
       starting = false;
     }
@@ -74,7 +94,8 @@
             <li><span>01</span><p>Timer dimulai setelah tombol <b>“Mulai ujian”</b> ditekan.</p></li>
             <li><span>02</span><p>Jawaban tersimpan otomatis. Pastikan indikator menunjukkan <b>“Tersimpan”</b>.</p></li>
             <li><span>03</span><p>Gunakan fitur <b>“Tandai ragu-ragu”</b> untuk soal yang ingin ditinjau lagi.</p></li>
-            <li><span>04</span><p>Ujian yang sudah dikumpulkan <b>tidak dapat dibuka kembali</b>.</p></li>
+            <li><span>04</span><p>Ujian wajib dikerjakan dalam <b>mode layar penuh</b>. Pindah tab atau keluar dari layar penuh akan mengunci ujian sampai peserta kembali.</p></li>
+            <li><span>05</span><p>Refresh, menutup halaman, copy-paste, klik kanan, dan shortcut navigasi dibatasi selama ujian.</p></li>
           </ol>
         </div>
       </section>
@@ -85,11 +106,59 @@
         <strong>{exam.duration_minutes}<small>menit</small></strong>
         <p>Pastikan koneksi internet stabil dan jangan menutup halaman ujian.</p>
         {#if error}<div class="error" role="alert">{error}</div>{/if}
-        <button class="primary" onclick={start} disabled={starting}>{starting ? 'Menyiapkan soal…' : 'Mulai ujian'} {#if !starting}<AppIcon name="arrow" size={18}/>{/if}</button>
+        <button class="primary" onclick={openRules} disabled={starting}>Mulai ujian <AppIcon name="arrow" size={18}/></button>
         <small class="note"><AppIcon name="lock" size={13}/> Dengan memulai, kamu menyetujui ketentuan ujian.</small>
       </aside>
     </div>
   </main>
+{/if}
+
+{#if rulesOpen && exam}
+  <div class="rules-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && closeRules()}>
+    <div class="rules-modal" role="dialog" aria-modal="true" aria-labelledby="rules-title" aria-describedby="rules-description">
+      <button class="rules-close" onclick={closeRules} disabled={starting} aria-label="Tutup aturan ujian"><AppIcon name="close" size={18}/></button>
+      <div class="rules-icon"><AppIcon name="lock" size={25}/></div>
+      <p class="eyebrow">Persetujuan peserta</p>
+      <h2 id="rules-title">Aturan dan larangan ujian</h2>
+      <p id="rules-description" class="rules-lead">Baca seluruh ketentuan sebelum memulai <b>{exam.name}</b>. Timer berjalan setelah kamu menyetujui aturan berikut.</p>
+
+      <div class="rules-sections">
+        <div>
+          <h3><span>01</span> Aturan pengerjaan</h3>
+          <ul>
+            <li>Kerjakan ujian dalam mode layar penuh sampai selesai.</li>
+            <li>Pastikan koneksi internet dan daya perangkat stabil.</li>
+            <li>Periksa indikator penyimpanan sebelum berpindah soal.</li>
+            <li>Kumpulkan ujian hanya setelah seluruh jawaban diperiksa.</li>
+          </ul>
+        </div>
+        <div class="prohibited">
+          <h3><span>02</span> Larangan selama ujian</h3>
+          <ul>
+            <li>Dilarang membuka atau berpindah ke tab, window, dan aplikasi lain.</li>
+            <li>Dilarang refresh, menutup halaman, atau keluar dari layar penuh.</li>
+            <li>Dilarang copy-paste, klik kanan, mencetak, atau mengambil konten soal.</li>
+            <li>Dilarang membuka DevTools atau mencoba memanipulasi sistem ujian.</li>
+          </ul>
+        </div>
+      </div>
+
+      <label class="rules-consent">
+        <input type="checkbox" bind:checked={rulesAccepted} disabled={starting} />
+        <span>Saya sudah membaca, memahami, dan bersedia mematuhi seluruh aturan ujian.</span>
+      </label>
+
+      {#if error}<div class="rules-error" role="alert"><AppIcon name="alert" size={17}/>{error}</div>{/if}
+      <div class="rules-actions">
+        <button class="ghost" onclick={closeRules} disabled={starting}>Batal</button>
+        <button class="primary" onclick={start} disabled={!rulesAccepted || starting}>
+          {starting ? 'Menyiapkan soal…' : 'Saya mengerti, mulai ujian'}
+          {#if !starting}<AppIcon name="arrow" size={18}/>{/if}
+        </button>
+      </div>
+      <small class="rules-note"><AppIcon name="clock" size={13}/> Durasi ujian: {exam.duration_minutes} menit</small>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -125,7 +194,18 @@
   aside > p:not(.eyebrow) { margin: 1.2rem 0 1.5rem; color: var(--muted); font-size: .76rem; line-height: 1.6; }
   aside button { width: 100%; }.note { margin-top: .9rem; display: flex; align-items: center; justify-content: center; gap: .35rem; color: #8a9098; font-size: .62rem; }
   .error { margin-bottom: .8rem; padding: .6rem; color: #9a3939; background: #fff0ed; border-radius: .5rem; font-size: .72rem; }
+  .rules-backdrop { position: fixed; inset: 0; z-index: 100; padding: 1rem; display: grid; place-items: center; overflow-y: auto; background: rgb(8 20 38 / .82); backdrop-filter: blur(7px); }
+  .rules-modal { width: min(720px, 100%); max-height: calc(100vh - 2rem); padding: clamp(1.3rem, 4vw, 2rem); overflow-y: auto; background: white; border-radius: 1.1rem; box-shadow: 0 28px 80px rgb(0 0 0 / .35); position: relative; }
+  .rules-close { width: 2.2rem; height: 2.2rem; display: grid; place-items: center; color: var(--muted); background: #f5f4f0; border: 0; border-radius: 50%; cursor: pointer; position: absolute; top: 1rem; right: 1rem; }
+  .rules-icon { width: 3.7rem; height: 3.7rem; margin-bottom: 1rem; display: grid; place-items: center; color: white; background: var(--navy); border-radius: 50%; }
+  .rules-modal h2 { margin: .35rem 0 .65rem; color: var(--navy); font: 400 clamp(1.55rem, 4vw, 2rem)/1.15 var(--display); }.rules-lead { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.65; }.rules-lead b { color: var(--navy); }
+  .rules-sections { margin: 1.4rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }.rules-sections > div { padding: 1rem; background: #f7f8f8; border: 1px solid #e2e7e9; border-radius: .8rem; }.rules-sections .prohibited { background: #fff6f3; border-color: #f1d8d1; }
+  .rules-sections h3 { margin: 0 0 .75rem; display: flex; align-items: center; gap: .45rem; color: var(--navy); font-size: .78rem; }.rules-sections h3 span { color: var(--coral-dark); font: .75rem var(--display); }
+  .rules-sections ul { margin: 0; padding-left: 1.05rem; display: grid; gap: .5rem; }.rules-sections li { display: list-item; color: #596570; font-size: .7rem; line-height: 1.5; }.rules-sections li::marker { color: var(--coral); }
+  .rules-consent { padding: .85rem; display: flex; align-items: flex-start; gap: .7rem; color: var(--navy); background: #edf5f2; border: 1px solid #cfe3da; border-radius: .7rem; font-size: .74rem; font-weight: 650; line-height: 1.5; cursor: pointer; }.rules-consent input { width: 1rem; height: 1rem; margin-top: .1rem; accent-color: var(--navy); flex: 0 0 auto; }
+  .rules-error { margin-top: .8rem; padding: .7rem; display: flex; align-items: center; gap: .5rem; color: #943b32; background: #fff0ed; border-radius: .6rem; font-size: .72rem; }
+  .rules-actions { margin-top: 1rem; display: grid; grid-template-columns: .7fr 1.5fr; gap: .7rem; }.rules-actions button { width: 100%; }.rules-note { margin-top: .8rem; display: flex; justify-content: center; align-items: center; gap: .35rem; color: var(--muted); font-size: .62rem; }
   .state { min-height: 70vh; display: grid; place-content: center; justify-items: center; text-align: center; }.state h1 { font-family: var(--display); }.state p { color: var(--muted); }
   @media (max-width: 800px) { .layout { grid-template-columns: 1fr; }.ready { display: none; } aside { order: -1; }.hero { padding: 1.6rem; } }
-  @media (max-width: 560px) { .info-grid { grid-template-columns: 1fr; }.info-grid > div { border-right: 0 !important; border-bottom: 1px solid var(--line); }.details, aside { padding: 1.25rem; } }
+  @media (max-width: 560px) { .info-grid { grid-template-columns: 1fr; }.info-grid > div { border-right: 0 !important; border-bottom: 1px solid var(--line); }.details, aside { padding: 1.25rem; }.rules-sections { grid-template-columns: 1fr; }.rules-actions { grid-template-columns: 1fr; } }
 </style>

@@ -102,10 +102,11 @@ export const api = {
     if (hasAnswerKey) throw new ApiError('Respons soal tidak aman dan telah ditolak.', 500);
     return { ...data, exam };
   },
-  async save(examId: number, answers: Record<string, Answer>) {
+  async save(examId: number, answers: Record<string, Answer>, keepalive = false) {
     return request('save', {
       method: 'POST',
-      body: JSON.stringify({ exam_type_id: examId, answers })
+      body: JSON.stringify({ exam_type_id: examId, answers }),
+      keepalive
     });
   },
   async submit(examId: number) {
