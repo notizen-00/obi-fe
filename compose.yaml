@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: obi-cbt:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      PUBLIC_CBT_API_BASE_URL: ${PUBLIC_CBT_API_BASE_URL:?PUBLIC_CBT_API_BASE_URL harus diisi di file .env}
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true

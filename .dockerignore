@@ -1,0 +1,13 @@
+.git
+.gitignore
+.svelte-kit
+build
+node_modules
+npm-debug.log*
+.env
+.env.*
+!.env.example
+Dockerfile*
+compose*.yaml
+compose*.yml
+README.md
