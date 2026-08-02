@@ -4,9 +4,18 @@ import { env } from '$env/dynamic/public';
 import { clearAuth } from '$lib/auth';
 
 import type { ActiveExam, Answer, Attempt, ExamKind, ExamSummary, User } from '$lib/types';
+import type { StrictExamEvent } from '$lib/exam-security';
 
 const apiBaseUrl = env.PUBLIC_CBT_API_BASE_URL || '';
 
+
+export type ExamSecurityStatus = {
+  violation_count: number;
+  requires_reason: boolean;
+  warning?: string;
+  last_event_at?: string | null;
+  reason_submitted_at?: string | null;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -107,6 +116,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ exam_type_id: examId, answers }),
       keepalive
+    });
+  },
+  async securityStatus(examId: number): Promise<ExamSecurityStatus> {
+    return request('security_status&exam_type_id=' + examId);
+  },
+  async securityEvent(examId: number, event: StrictExamEvent): Promise<ExamSecurityStatus> {
+    return request('security_event', {
+      method: 'POST',
+      body: JSON.stringify({
+        exam_type_id: examId,
+        event_id: event.id,
+        event_type: event.type,
+        occurred_at: event.occurredAt
+      }),
+      keepalive: true
+    });
+  },
+  async securityReason(examId: number, reason: string): Promise<ExamSecurityStatus> {
+    return request('security_reason', {
+      method: 'POST',
+      body: JSON.stringify({ exam_type_id: examId, reason })
     });
   },
   async submit(examId: number) {

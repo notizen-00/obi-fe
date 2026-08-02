@@ -28,6 +28,11 @@
   let submitting = $state(false);
   let securityLocked = $state(false);
   let securityMessage = $state('Aktifkan layar penuh untuk melanjutkan ujian.');
+  let securityCount = $state(0);
+  let reasonRequired = $state(false);
+  let securityReason = $state('');
+  let reasonError = $state('');
+  let reasonSubmitting = $state(false);
   let saveRunning = false;
   let saveQueued = false;
   let dirty = false;
@@ -47,11 +52,12 @@
   onMount(() => {
     online = navigator.onLine;
     guard = new StrictExamGuard({
-      onState: ({ reason, locked }) => {
+      onState: ({ reason, locked, event }) => {
         securityLocked = locked;
         securityMessage = reason;
         cacheLocal();
         if (dirty) void saveAnswers();
+        if (event) void reportSecurityEvent(event);
       },
       onBeforeExit: () => {
         cacheLocal();
@@ -114,6 +120,7 @@
       remaining = getRemaining(examEndsAt, offset);
       restoreLocal(exam);
       guard.enable();
+      await refreshSecurityStatus();
       saveState = 'idle';
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Ruang ujian gagal dimuat.';
@@ -221,8 +228,60 @@
     cacheLocal();
   }
 
+  function applySecurityStatus(status: {
+    violation_count: number;
+    requires_reason: boolean;
+    warning?: string;
+  }) {
+    securityCount = Math.max(0, Number(status.violation_count) || 0);
+    reasonRequired = Boolean(status.requires_reason);
+    if (status.warning) securityMessage = status.warning;
+    if (reasonRequired) securityLocked = true;
+  }
+
+  async function refreshSecurityStatus() {
+    if (!active) return;
+    try {
+      applySecurityStatus(await api.securityStatus(active.exam.id));
+    } catch {
+      securityMessage = 'Status pengawasan server belum dapat diperbarui. Periksa koneksi internet.';
+    }
+  }
+
+  async function reportSecurityEvent(event: import('$lib/exam-security').StrictExamEvent) {
+    if (!active) return;
+    try {
+      applySecurityStatus(await api.securityEvent(active.exam.id, event));
+    } catch {
+      securityMessage = 'Aktivitas keluar terdeteksi, tetapi catatan server belum tersinkron. Coba kembali saat koneksi pulih.';
+    }
+  }
+
+  async function submitSecurityReason(event: SubmitEvent) {
+    event.preventDefault();
+    if (!active || reasonSubmitting) return;
+    const reason = securityReason.trim();
+    if (reason.length < 10) {
+      reasonError = 'Jelaskan alasan minimal 10 karakter.';
+      return;
+    }
+    reasonError = '';
+    reasonSubmitting = true;
+    try {
+      applySecurityStatus(await api.securityReason(active.exam.id, reason));
+      securityReason = '';
+      reasonRequired = false;
+      securityLocked = true;
+      securityMessage = 'Alasan sudah diterima. Aktifkan kembali layar penuh untuk melanjutkan.';
+    } catch (cause) {
+      reasonError = cause instanceof Error ? cause.message : 'Alasan belum berhasil dikirim.';
+    } finally {
+      reasonSubmitting = false;
+    }
+  }
+
   async function resumeSecureExam() {
-    if (submitting) return;
+    if (submitting || reasonRequired) return;
     try {
       await guard.enterFullscreen();
       securityLocked = false;
@@ -289,9 +348,10 @@
     </header>
 
     {#if !online}<div class="offline-banner" role="alert"><AppIcon name="alert" size={16}/> Koneksi terputus. Jawaban tetap tersimpan di perangkat dan akan dikirim saat koneksi pulih.</div>{/if}
-    <div class="security-banner" role="status">
+    <div class="security-banner" class:warning={securityCount >= 3} role="status">
       <AppIcon name="lock" size={15}/>
       Mode ujian ketat aktif
+      <span>Catatan server: <b>{securityCount}</b></span>
     </div>
 
     <main>
@@ -421,7 +481,29 @@
     </div>
   {/if}
 
-  {#if securityLocked && !submitting}
+
+  {#if reasonRequired && !submitting}
+    <div class="reason-backdrop" role="presentation">
+      <form class="reason-modal" onsubmit={submitSecurityReason} aria-labelledby="reason-title">
+        <div class="reason-icon"><AppIcon name="alert" size={28}/></div>
+        <p class="eyebrow">Peringatan keamanan</p>
+        <h2 id="reason-title">Jelaskan alasan meninggalkan ujian</h2>
+        <div class="reason-warning" role="alert">
+          <AppIcon name="alert" size={18}/>
+          <p><b>Aktivitas keluar telah tercatat {securityCount} kali.</b><span>Kamu tidak dihukum atau dikumpulkan otomatis, tetapi alasan wajib diberikan sebelum ujian dapat dilanjutkan.</span></p>
+        </div>
+        <label for="security-reason">Alasan menutup halaman atau berpindah tab</label>
+        <textarea id="security-reason" bind:value={securityReason} minlength="10" maxlength="500" rows="5" placeholder="Contoh: koneksi terputus dan browser tertutup otomatis..." disabled={reasonSubmitting} required></textarea>
+        <div class="reason-meta"><span>Minimal 10 karakter</span><span>{securityReason.trim().length}/500</span></div>
+        {#if reasonError}<div class="reason-error" role="alert">{reasonError}</div>{/if}
+        <button class="primary" type="submit" disabled={reasonSubmitting || securityReason.trim().length < 10}>
+          {reasonSubmitting ? 'Mengirim alasan…' : 'Kirim alasan dan lanjutkan'}
+        </button>
+        <small><AppIcon name="lock" size={13}/> Alasan disimpan bersama catatan sesi ujian di server.</small>
+      </form>
+    </div>
+  {/if}
+  {#if securityLocked && !submitting && !reasonRequired}
     <div class="security-lock" role="alertdialog" aria-modal="true" aria-labelledby="security-title">
       <div class="security-lock-card">
         <div class="security-lock-icon"><AppIcon name="lock" size={30}/></div>
@@ -448,6 +530,13 @@
   .timer b { font: 1.1rem/1 var(--display); letter-spacing: .08em; }.timer.warning { color: #ffd477; }.timer.critical { color: #ff987f; background: rgb(239 119 93 / .12); }
   .offline-banner { padding: .65rem 1rem; display: flex; justify-content: center; align-items: center; gap: .5rem; color: #7a4c05; background: #fff1c1; font-size: .75rem; font-weight: 650; }
   .security-banner { padding: .5rem 1rem; display: flex; justify-content: center; align-items: center; gap: .45rem; color: #276749; background: #e8f6ef; border-bottom: 1px solid #cde9db; font-size: .7rem; font-weight: 750; }
+  .security-banner span { margin-left: .45rem; padding-left: .7rem; border-left: 1px solid currentColor; }.security-banner.warning { color: #8b4d12; background: #fff3d8; border-color: #ecd49b; }
+  .reason-backdrop { position: fixed; inset: 0; z-index: 1100; padding: 1rem; display: grid; place-items: center; overflow-y: auto; background: rgb(8 20 38 / .96); backdrop-filter: blur(9px); }
+  .reason-modal { width: min(540px, 100%); padding: clamp(1.3rem, 4vw, 2rem); background: white; border-radius: 1rem; box-shadow: 0 28px 90px rgb(0 0 0 / .4); }
+  .reason-icon { width: 4rem; height: 4rem; margin: 0 auto 1rem; display: grid; place-items: center; color: white; background: #c0523e; border-radius: 50%; }.reason-modal > .eyebrow, .reason-modal h2 { text-align: center; }.reason-modal h2 { margin: .4rem 0 1rem; color: var(--navy); font: 400 clamp(1.45rem, 4vw, 1.9rem)/1.2 var(--display); }
+  .reason-warning { margin-bottom: 1rem; padding: .85rem; display: flex; align-items: flex-start; gap: .65rem; color: #8b3e31; background: #fff0ec; border: 1px solid #efcbc2; border-radius: .7rem; }.reason-warning p { margin: 0; display: grid; gap: .2rem; }.reason-warning b { font-size: .76rem; }.reason-warning span { color: #775f59; font-size: .68rem; line-height: 1.5; }
+  .reason-modal label { display: block; margin-bottom: .45rem; color: var(--navy); font-size: .75rem; font-weight: 750; }.reason-modal textarea { width: 100%; resize: vertical; padding: .8rem; color: var(--navy); background: white; border: 1px solid #d6d3cd; border-radius: .65rem; font: inherit; line-height: 1.5; outline: 0; }.reason-modal textarea:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgb(16 35 63 / .08); }
+  .reason-meta { margin: .35rem 0 .8rem; display: flex; justify-content: space-between; color: var(--muted); font-size: .6rem; }.reason-error { margin-bottom: .7rem; padding: .65rem; color: #963d31; background: #fff0ed; border-radius: .55rem; font-size: .7rem; }.reason-modal > button { width: 100%; }.reason-modal > small { margin-top: .7rem; display: flex; align-items: center; justify-content: center; gap: .35rem; color: var(--muted); font-size: .6rem; }
   .security-lock { position: fixed; inset: 0; z-index: 1000; padding: 1rem; display: grid; place-items: center; background: rgb(8 20 38 / .94); backdrop-filter: blur(8px); }
   .security-lock-card { width: min(460px, 100%); padding: 2rem; text-align: center; background: white; border-radius: 1rem; box-shadow: 0 24px 70px rgb(0 0 0 / .35); }
   .security-lock-icon { width: 4.5rem; height: 4.5rem; margin: 0 auto 1rem; display: grid; place-items: center; color: white; background: var(--coral); border-radius: 50%; }

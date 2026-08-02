@@ -20,6 +20,10 @@ function _page($$renderer, $$props) {
       $$renderer2.push("<!--[0-->");
       $$renderer2.push(`<div class="page-loader"><span></span><p>Menyiapkan ruang ujian…</p></div>`);
     }
+    $$renderer2.push(`<!--]--> `);
+    {
+      $$renderer2.push("<!--[-1-->");
+    }
     $$renderer2.push(`<!--]-->`);
   });
 }

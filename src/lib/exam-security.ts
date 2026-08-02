@@ -1,6 +1,15 @@
+﻿export type StrictExamEventType = 'tab_hidden' | 'fullscreen_exit' | 'page_exit';
+
+export type StrictExamEvent = {
+  id: string;
+  type: StrictExamEventType;
+  occurredAt: string;
+};
+
 export type StrictExamState = {
   reason: string;
   locked: boolean;
+  event?: StrictExamEvent;
 };
 
 type StrictExamGuardOptions = {
@@ -15,16 +24,20 @@ export class StrictExamGuard {
   private armed = false;
   private leaving = false;
   private lastViolationAt = 0;
+  private lastEventId = '';
+  private fullscreenSupported = false;
+
   constructor(private readonly options: StrictExamGuardOptions) {}
 
   enable() {
     if (this.armed) return;
     this.armed = true;
+    this.fullscreenSupported = Boolean(document.fullscreenEnabled && document.documentElement.requestFullscreen);
     window.addEventListener('keydown', this.handleKeydown, { capture: true });
     window.addEventListener('beforeunload', this.handleBeforeUnload);
     window.addEventListener('pagehide', this.handlePageHide);
     document.addEventListener('visibilitychange', this.handleVisibility);
-    document.addEventListener('fullscreenchange', this.handleFullscreen);
+    if (this.fullscreenSupported) document.addEventListener('fullscreenchange', this.handleFullscreen);
     document.addEventListener('contextmenu', this.blockInteraction);
     document.addEventListener('copy', this.blockInteraction);
     document.addEventListener('cut', this.blockInteraction);
@@ -32,6 +45,11 @@ export class StrictExamGuard {
     document.addEventListener('dragstart', this.blockInteraction);
     document.addEventListener('selectstart', this.blockInteraction);
     document.addEventListener('selectionchange', this.clearSelection);
+
+    if (!this.fullscreenSupported) {
+      this.emit('Browser tidak mendukung layar penuh. Ujian dilanjutkan tanpa mode layar penuh.', false);
+      return;
+    }
 
     this.emit(
       document.fullscreenElement ? 'Mode ujian ketat aktif.' : 'Aktifkan layar penuh untuk melanjutkan ujian.',
@@ -61,23 +79,25 @@ export class StrictExamGuard {
   }
 
   async enterFullscreen() {
-    if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) {
-      throw new Error('Browser tidak mendukung layar penuh. Gunakan browser terbaru untuk melanjutkan.');
+    if (!this.fullscreenSupported) {
+      this.emit('Browser tidak mendukung layar penuh. Ujian dilanjutkan tanpa mode layar penuh.', false);
+      return;
     }
     await document.documentElement.requestFullscreen();
     this.emit('Mode ujian ketat aktif.', false);
   }
 
   private readonly handleVisibility = () => {
-    if (document.hidden) this.record('Berpindah tab atau menyembunyikan halaman ujian.');
+    if (document.hidden) this.record('Berpindah tab atau menyembunyikan halaman ujian.', 'tab_hidden');
   };
 
   private readonly handleFullscreen = () => {
-    if (!document.fullscreenElement) this.record('Keluar dari mode layar penuh.');
+    if (!document.fullscreenElement) this.record('Keluar dari mode layar penuh.', 'fullscreen_exit');
   };
 
   private readonly handleBeforeUnload = (event: BeforeUnloadEvent) => {
     if (!this.armed || this.leaving) return;
+    this.record('Mencoba refresh atau menutup halaman ujian.', 'page_exit', true);
     this.options.onBeforeExit();
     event.preventDefault();
     event.returnValue = '';
@@ -85,6 +105,7 @@ export class StrictExamGuard {
 
   private readonly handlePageHide = () => {
     if (!this.armed || this.leaving) return;
+    this.record('Menutup atau meninggalkan halaman ujian.', 'page_exit', true);
     this.options.onBeforeExit();
   };
 
@@ -111,15 +132,26 @@ export class StrictExamGuard {
     if (selection && !selection.isCollapsed) selection.removeAllRanges();
   };
 
-  private record(reason: string) {
+  private record(reason: string, type: StrictExamEventType, reuseRecentId = false) {
     if (!this.armed || this.leaving) return;
     const now = Date.now();
-    if (now - this.lastViolationAt < 1500) return;
+    const recentIncident = now - this.lastViolationAt < 1500;
+    if (recentIncident && !reuseRecentId) return;
+
+    if (!recentIncident || !this.lastEventId) {
+      this.lastEventId = typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${now}-${Math.random().toString(36).slice(2)}`;
+    }
     this.lastViolationAt = now;
-    this.emit(reason, true);
+    this.emit(reason, true, {
+      id: this.lastEventId,
+      type,
+      occurredAt: new Date(now).toISOString()
+    });
   }
 
-  private emit(reason: string, locked: boolean) {
-    this.options.onState({ reason, locked });
+  private emit(reason: string, locked: boolean, event?: StrictExamEvent) {
+    this.options.onState({ reason, locked, event });
   }
 }
